@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor de enchente</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  --fundo:#e9eff1; --painel:#f8fbfc; --tinta:#14232b; --suave:#5b6f78; --linha:#c9d6db;
+  --agua:#1b7f9e; --seguro:#2d8a57; --alerta:#c98a0f; --perigo:#c0342b; --cor:var(--seguro);
+  font-family: Bahnschrift, "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --fundo:#0f1a1f; --painel:#16262d; --tinta:#e6eff2; --suave:#8fa6b0; --linha:#2b414a; }
+}
+[data-nivel="ALERTA"] { --cor: var(--alerta); }
+[data-nivel="PERIGO"] { --cor: var(--perigo); }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--fundo); color:var(--tinta); }
+header { display:flex; justify-content:space-between; align-items:center; gap:12px;
+  padding:16px clamp(16px,4vw,40px); border-bottom:1px solid var(--linha); }
+h1 { font-size:1.25rem; margin:0; font-weight:600; }
+h2 { font-size:1rem; margin:0 0 12px; font-weight:600; }
+#conexao { font-size:.9rem; color:var(--suave); display:flex; align-items:center; gap:8px; }
+#conexao::before { content:""; width:10px; height:10px; border-radius:50%; background:var(--perigo); }
+#conexao.on::before { background:var(--seguro); }
+main { display:grid; gap:16px; padding:clamp(16px,4vw,40px);
+  grid-template-columns: minmax(260px,340px) 1fr; max-width:1200px; margin:auto; }
+section { background:var(--painel); border:1px solid var(--linha); border-radius:6px; padding:18px; min-width:0; }
+.tanque-box { display:flex; gap:20px; align-items:stretch; }
+.tanque { position:relative; width:110px; height:300px; border:2px solid var(--tinta);
+  border-top-width:0; border-radius:0 0 10px 10px; overflow:hidden; background:var(--fundo); }
+.agua { position:absolute; left:0; right:0; bottom:0; height:0; background:var(--cor);
+  opacity:.85; transition:height .6s ease, background .3s; }
+.marca { position:absolute; left:0; right:0; border-top:2px dashed var(--tinta); font-size:.7rem; }
+.marca span { position:absolute; right:4px; top:2px; color:var(--tinta); background:var(--painel); padding:0 3px; }
+.leitura { display:flex; flex-direction:column; justify-content:center; gap:6px; }
+.valor { font-size:3rem; font-weight:700; line-height:1; color:var(--cor); }
+.nivel { font-size:1.2rem; font-weight:600; color:var(--cor); }
+.leitura small { color:var(--suave); }
+.controles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+button { font:inherit; padding:10px 12px; border:1px solid var(--tinta); background:transparent;
+  color:var(--tinta); border-radius:4px; cursor:pointer; }
+button:hover { background:var(--tinta); color:var(--painel); }
+button:focus-visible, select:focus-visible { outline:3px solid var(--agua); outline-offset:2px; }
+#aviso { min-height:1.3em; margin:10px 0 0; color:var(--suave); font-size:.9rem; }
+.coluna { display:grid; gap:16px; align-content:start; }
+.grafico { position:relative; height:260px; }
+.historico { grid-column:1 / -1; }
+.tabela { max-height:320px; overflow:auto; }
+table { width:100%; border-collapse:collapse; font-size:.9rem; }
+th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--linha); }
+th { position:sticky; top:0; background:var(--painel); }
+.barra { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
+select { font:inherit; padding:6px; background:var(--painel); color:var(--tinta); border:1px solid var(--linha); }
+@media (max-width:760px) { main { grid-template-columns:1fr; } .tanque { height:240px; } }
+@media (prefers-reduced-motion: reduce) { .agua { transition:none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Monitor de enchente</h1>
+  <div id="conexao">Sem sinal do sensor</div>
+</header>
+
+<main id="painel" data-nivel="SEGURO">
+  <section>
+    <h2>Nível da água agora</h2>
+    <div class="tanque-box">
+      <div class="tanque" role="img" aria-label="Nível da água no reservatório">
+        <div class="agua" id="agua"></div>
+        <div class="marca" id="mAlerta"><span>alerta</span></div>
+        <div class="marca" id="mPerigo"><span>perigo</span></div>
+      </div>
+      <div class="leitura">
+        <div class="nivel" id="nivel">Aguardando</div>
+        <div class="valor" id="dist">--</div>
+        <small>cm entre o sensor e a água</small>
+        <small id="extra"></small>
+      </div>
+    </div>
+  </section>
+
+  <div class="coluna">
+    <section>
+      <h2>Distância em tempo real</h2>
+      <div class="grafico"><canvas id="grafico"></canvas></div>
+    </section>
+    <section>
+      <h2>Controlar dispositivo</h2>
+      <div class="controles">
+        <button data-cmd="SILENCIAR">Silenciar alarme</button>
+        <button data-cmd="ATIVAR_SOM">Reativar som</button>
+        <button data-cmd="COMPORTA_FECHAR">Fechar comporta</button>
+        <button data-cmd="COMPORTA_ABRIR">Abrir comporta</button>
+        <button data-cmd="MODO_AUTO">Comporta automática</button>
+      </div>
+      <p id="aviso" role="status" aria-live="polite"></p>
+    </section>
+  </div>
+
+  <section class="historico">
+    <div class="barra">
+      <h2>Histórico de leituras</h2>
+      <label>Período
+        <select id="periodo">
+          <option value="1">Última hora</option>
+          <option value="24" selected>Últimas 24 horas</option>
+          <option value="168">Últimos 7 dias</option>
+        </select>
+      </label>
+    </div>
+    <div class="tabela">
+      <table>
+        <thead><tr><th>Data e hora</th><th>Distância (cm)</th><th>Nível</th></tr></thead>
+        <tbody id="corpoHist"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="historico">
+    <h2>Eventos do sistema</h2>
+    <div class="tabela">
+      <table>
+        <thead><tr><th>Data e hora</th><th>Tipo</th><th>Mensagem</th></tr></thead>
+        <tbody id="corpoLogs"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+const ALTURA_SENSOR = 50;    // cm: escala do reservatório e do gráfico
+const LIMITE_ALERTA = 25;    // cm: início da faixa de atenção (amarelo)
+const $ = id => document.getElementById(id);
+const NOMES = { SEGURO: "Seguro", ALERTA: "Alerta", PERIGO: "Perigo de enchente" };
+
+const grafico = new Chart($("grafico"), {
+  type: "line",
+  data: { labels: [], datasets: [
+    { label: "Distância (cm)", data: [], borderColor: "#1b7f9e", pointRadius: 0, tension: .25 },
+    { label: "Limite de perigo", data: [], borderColor: "#c0342b", borderDash: [6,4], pointRadius: 0 }
+  ]},
+  options: { responsive: true, maintainAspectRatio: false, animation: false,
+    scales: { y: { min: 0, max: ALTURA_SENSOR, reverse: true, title: { display: true, text: "cm até a água" } } } }
+});
+
+function celula(tr, texto) { const td = document.createElement("td"); td.textContent = texto; tr.appendChild(td); }
+function preencher(corpo, linhas) {
+  corpo.replaceChildren(...linhas.map(l => { const tr = document.createElement("tr"); l.forEach(t => celula(tr, t)); return tr; }));
+}
+const pct = d => Math.max(0, Math.min(100, (ALTURA_SENSOR - d) / ALTURA_SENSOR * 100));
+
+async function atualizar() {
+  try {
+    const r = await (await fetch("/api/leitura/atual")).json();
+    $("conexao").classList.toggle("on", !!r.online);
+    $("conexao").textContent = r.online ? "Sensor conectado" : "Sem sinal do sensor";
+    if (r.dist === undefined) return;
+    $("painel").dataset.nivel = r.nivel;
+    $("nivel").textContent = NOMES[r.nivel];
+    $("dist").textContent = r.dist.toFixed(1);
+    $("agua").style.height = pct(r.dist) + "%";
+    $("mPerigo").style.bottom = pct(r.perigo) + "%";
+    $("mAlerta").style.bottom = pct(LIMITE_ALERTA) + "%";
+    $("extra").textContent = `Alarme ${r.silenciado ? "silenciado" : "ativo"} · comporta ${r.comporta}° (${r.modo === "AUTO" ? "automática" : "manual"})`;
+    if (r.online) {
+      const d = grafico.data;
+      d.labels.push(new Date().toLocaleTimeString("pt-BR"));
+      d.datasets[0].data.push(r.dist);
+      d.datasets[1].data.push(r.perigo);
+      if (d.labels.length > 60) { d.labels.shift(); d.datasets.forEach(s => s.data.shift()); }
+      grafico.update();
+    }
+  } catch (e) { $("conexao").classList.remove("on"); $("conexao").textContent = "API fora do ar"; }
+}
+
+async function carregarHistorico() {
+  const dados = await (await fetch(`/api/leituras?horas=${$("periodo").value}&limite=300`)).json();
+  preencher($("corpoHist"), dados.map(l => [l.criado_em, l.distancia_cm.toFixed(1), NOMES[l.nivel]]));
+  const logs = await (await fetch("/api/logs?limite=30")).json();
+  preencher($("corpoLogs"), logs.map(l => [l.criado_em, l.tipo, l.mensagem]));
+}
+
+document.querySelectorAll("[data-cmd]").forEach(b => b.addEventListener("click", async () => {
+  const r = await fetch("/api/comandos", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tipo: b.dataset.cmd }) });
+  const j = await r.json();
+  $("aviso").textContent = r.ok ? `${b.textContent}: comando enviado.` : `Não foi possível enviar: ${j.erro}`;
+  carregarHistorico();
+}));
+$("periodo").addEventListener("change", carregarHistorico);
+
+atualizar(); carregarHistorico();
+setInterval(atualizar, 1000);
+setInterval(carregarHistorico, 15000);
+</script>
+</body>
+</html>
