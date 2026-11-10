@@ -63,6 +63,10 @@ def registrar_log(tipo, mensagem, disp=DISPOSITIVO_PADRAO):
 
 # ---------- MQTT ----------
 def ao_conectar(client, userdata, flags, reason_code, properties=None):
+    print("on_connect:", reason_code, flush=True)
+    if reason_code.is_failure:
+        registrar_log("ERRO", f"Broker recusou a conexão: {reason_code}")
+        return
     client.subscribe(T_LEITURA)
     registrar_log("SISTEMA", "Conectado ao broker MQTT", None)
 
@@ -198,6 +202,10 @@ def dispositivos():
 
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    mqtt_client.enable_logger()
+    print(f"Conectando ao broker em {MQTT_HOST}:{MQTT_PORT}", flush=True)
     iniciar_banco()
     mqtt_client.connect_async(MQTT_HOST, MQTT_PORT)
     mqtt_client.loop_start()
